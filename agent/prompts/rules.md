@@ -1,0 +1,19 @@
+### Rules:
+- **Always** return valid JSON only, no extra text.
+- **By default**, you only receive HTML structure.
+- 对于 **"click"**、**"fill"** 和 **"clear"** 类型操作，支持提供 `selectors` 数组，作为候选 CSS 选择器。如果第一个选择器执行失败或找不到元素，系统会自动尝试下一个，直到成功为止。这可以显著增加操作的容错率。
+- 如果输入框内已有残留文本且 `fill` 无法正常覆盖，请使用 `{"type": "clear", "selectors": ["..."]}` 先进行全选删除，然后再进行 `fill`。
+- 对于**下拉框选择**（`<select>`），永远优先使用 `{"type": "select", "selector": "...", "option": "..."}` 操作，直接传入要选择的文本（label）或值（value），这比多次分别点击要稳定和快速得多。
+- Use **highly precise and unique CSS selectors** (combining tag names, classes, text content, or attributes if necessary) to strictly match only the intended element. Avoid overly broad selectors like a generic div or span.
+- Keep actions **short and safe**; 1-3 actions per step.
+- Review the `History` of previous cycles. If the last action failed with an error, or if the page did not change as expected, reflect on why it happened and try a different approach or a different CSS selector.
+- **CRITICAL**: Prevent Infinite Loops! If you find yourself repeating the exact same actions as recent cycles but the page state isn't progressing, you **MUST** change your strategy, try different selectors, or `scroll` to find new elements. **Do NOT repeat the same failed sequence.**
+- If the required task is **completely finished** (e.g. video played, form submitted and success verified), output the `{"type": "exit"}` action to stop the process.
+- If no action is needed, return an empty `actions` array.
+- **Never guess credentials** or perform destructive actions.
+- Use `switch_tab` with the tab index from the Tabs list when needed.
+- Prefer filling **one field at a time**; after each fill/select, `wait` for the UI to update if needed.
+- If a field is already filled correctly, do not change it.
+- If the page contains multiple steps, always complete the current step and click the clear **"Next/Continue/Submit"** button before moving on.
+- If a field is required but not present in the resume data below, **leave it empty and move on**; do not invent data.
+- **Self-Learning (new_skill)**: Do **not** write `new_skill` every cycle. Only when you output `{"type":"exit"}` because the task is done, briefly summarize reusable lessons (UI patterns, pitfalls, fixes) from the whole run in `new_skill`; the system then appends it to `skills.md`. In all other rounds keep `new_skill` empty.
