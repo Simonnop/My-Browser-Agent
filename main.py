@@ -32,6 +32,7 @@ def main(task_name: str = "fill_resume"):
         context = p.chromium.launch_persistent_context(
             user_data_dir=str(USER_DATA_DIR),
             headless=False,
+            args=["--mute-audio"]  # 添加这一行，开启全局静音
         )
         page = context.new_page()
         current_page = {"page": page}
@@ -58,6 +59,9 @@ def main(task_name: str = "fill_resume"):
         if OUTPUT_DIR.exists():
             shutil.rmtree(OUTPUT_DIR)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+        send_html_full = True
+        add_content = ""
 
         while True:
             cycle_count += 1
@@ -180,6 +184,14 @@ def main(task_name: str = "fill_resume"):
                 else:
                     prompt_history.append(rec)
 
+            if send_html_full:
+                html_full = cleaned_html
+                send_html_full = True
+                html_rag_focus_block = "no html_rag_focus_block"
+                print("Sending full HTML to LLM")
+            else:
+                html_full = "no html_full"
+
             prompt = build_cycle_user_prompt(
                 core_instructions=core_instructions,
                 task_md=task_md,
@@ -195,10 +207,12 @@ def main(task_name: str = "fill_resume"):
                     html_file_path=html_path,
                     html_diff=html_diff,
                     html_rag_focus_block=html_rag_focus_block,
-                    # truncated_html=rag_html[:100000],
-                    html_full='no html_full',
+                    html_full=html_full,
                 ),
+                add_content = add_content,
             )
+
+            add_content = ""
 
             last_cleaned_html = cleaned_html
 
@@ -276,10 +290,11 @@ def main(task_name: str = "fill_resume"):
             print(f"Waiting {LOOP_INTERVAL_SEC}s for next cycle...\n")
 
             if len(history) >= 2:
-                if (history[-1]["actions"] == history[-2]["actions"]):
-                    print(f"[!] Warning: The LLM output the exact same actions for 2 consecutive cycles. Injecting system intervention warning.")
-                    # 并非清空记忆引起失忆，而是通过错误流强力干预
-                    history[-1]["error"] = "SYSTEM INTERVENTION: You are repeating the exact same actions without any progress. You MUST immediately change your strategy (e.g., try different selectors, use 'clear', scroll the page, or check for blocking element) and DO NOT repeat the same actions."
+                if (history[-1]["answer"] == history[-2]["answer"] or history[-1]["actions"] == history[-2]["actions"] or history[-1]["current_focused_task"] == history[-2]["current_focused_task"]):
+                    print(f"[!] Warning: The LLM output the exact same answer for 2 consecutive cycles. Injecting system intervention warning.")
+                    send_html_full = True
+                    # 告诉模型进入了死循环, 让他重新思考
+                    add_content = "你进入死循环了, 请观察 full_html, 并给出新的答案"
 
             try:
                 page.wait_for_timeout(LOOP_INTERVAL_SEC * 1000)

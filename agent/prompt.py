@@ -70,6 +70,7 @@ def build_cycle_user_prompt(
     skills_rag_section: str,
     attachment_rag_section: str,
     dynamic: CyclePromptDynamic,
+    add_content: str,
 ) -> str:
     """按前缀缓存友好顺序拼接一条完整的用户提示词。"""
     parts: List[str] = []
@@ -95,7 +96,14 @@ def build_cycle_user_prompt(
         parts.append(f"{SECTION_ATTACHMENT}{a}")
 
     # 5：页面遥测（每轮变）
-    hist = json.dumps(dynamic.prompt_history, ensure_ascii=False, indent=2)
+    # hist = json.dumps(dynamic.prompt_history, ensure_ascii=False, indent=2)
+    hist_parts: List[str] = []
+    for i, h in enumerate(dynamic.prompt_history):
+        hist_parts.append(f"Cycle {i+1}: {h.get('answer', '')}")
+        if "actions" in h:
+            hist_parts.append(f"Actions: {h.get('actions', [])}")
+    hist = "\n".join(hist_parts)
+
     diff = dynamic.html_diff
     if dynamic.html_diff_max_chars > 0 and len(diff) > dynamic.html_diff_max_chars:
         diff = diff[: dynamic.html_diff_max_chars] + "\n… (diff truncated)"
@@ -118,5 +126,5 @@ def build_cycle_user_prompt(
     parts.append(f"{SECTION_DIFF}{diff}")
     parts.append(f"{SECTION_RAG_FOCUS}{dynamic.html_rag_focus_block.strip()}")
     parts.append(f"{SECTION_HTML}{dynamic.html_full}")
-
+    parts.append(f"{add_content}")
     return "\n\n".join(parts)
