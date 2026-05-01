@@ -10,9 +10,9 @@ load_dotenv()
 
 def prepare_output_dir():
     """
-    清空并重新创建 output 文件夹
+    清空并重新创建 outputs 文件夹
     """
-    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    output_dir = os.path.join(os.path.dirname(__file__), "outputs")
     SaveTool.prepare_dir(output_dir, clear=True)
     LogTool.info(f"已清空并初始化输出目录: {output_dir}")
 
@@ -53,6 +53,14 @@ def main():
     max_steps = int(os.getenv("MAX_STEPS", "10"))
     headless = os.getenv("HEADLESS", "false").lower() == "true"
     user_data_dir = os.getenv("USER_DATA_DIR", "")
+    
+    # 浏览器伪装配置
+    user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    extra_args = [
+        "--disable-blink-features=AutomationControlled", # 核心：隐藏自动化控制特征
+        "--no-sandbox",
+        "--disable-infobars",
+    ]
 
     with sync_playwright() as p:
         if user_data_dir:
@@ -63,16 +71,31 @@ def main():
                 user_data_dir=user_data_path,
                 headless=headless,
                 no_viewport=False,
-                viewport={'width': 1280, 'height': 800}
+                viewport={'width': 1280, 'height': 800},
+                user_agent=user_agent,
+                args=extra_args,
+                ignore_default_args=["--enable-automation"], # 核心：移除自动化标志
+                locale="zh-CN",
+                timezone_id="Asia/Shanghai"
             )
             page = context.pages[0] if context.pages else context.new_page()
         else:
             # 使用普通无痕模式
-            browser = p.chromium.launch(headless=headless)
+            browser = p.chromium.launch(
+                headless=headless,
+                args=extra_args,
+                ignore_default_args=["--enable-automation"]
+            )
             context = browser.new_context(
-                viewport={'width': 1280, 'height': 800}
+                viewport={'width': 1280, 'height': 800},
+                user_agent=user_agent,
+                locale="zh-CN",
+                timezone_id="Asia/Shanghai"
             )
             page = context.new_page()
+        
+        # 注入额外的 JS 伪装，移除 navigator.webdriver
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         LogTool.info(f"正在访问: {target_url}")
         page.goto(target_url)

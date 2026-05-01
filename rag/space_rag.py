@@ -29,8 +29,12 @@ class SpaceRAG:
         hit_ids = []
         for entry in self.space_table:
             cx, cy = entry['center']
+            # 基础范围核验
             if min_x <= cx <= max_x and min_y <= cy <= max_y:
-                hit_ids.append(entry['id'])
+                # 二次核验：必须在当前视口范围内，且未被遮挡 (is_occluded 为 False)
+                if 0 <= cx <= viewport_size['width'] and 0 <= cy <= viewport_size['height']:
+                    if not entry.get('is_occluded', False):
+                        hit_ids.append(entry['id'])
 
         # 如果范围内没有任何节点，则回退到寻找最近的一个节点
         if not hit_ids:

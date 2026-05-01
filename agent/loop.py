@@ -8,6 +8,7 @@ from browser.capture import BrowserCapture
 from .tools import AgentTools
 from .memory import AgentMemory
 from tools.log import LogTool
+from tools.save import SaveTool
 from rag.key_rag import KeyRAG
 from rag.space_rag import SpaceRAG
 from rag.fusion import FusionModule
@@ -38,15 +39,17 @@ class AgentLoop:
             LogTool.info(f"当前标签页:\n{tabs_display}")
 
             # 1. 截图与视觉预感知
-            screenshot_path = os.path.join("output", f"step_{step}.jpg")
-            self.page.screenshot(path=screenshot_path)
+            screenshot_path = os.path.join("outputs", f"step_{step}.jpg")
+            # 优化截图：禁用动画等待，避免隐藏滚动条导致的闪烁
+            self.page.screenshot(path=screenshot_path, animations="disabled", caret="initial")
             
-            LogTool.info("正在进行视觉预感知...")
+            LogTool.info(f"正在分析截图 (Step {step + 1})...")
             perception, visual_usage = self.visual_subagent.perceive(
                 screenshot_path, 
                 task, 
                 tabs_display,
-                save_prompt_path=os.path.join("output", f"step_{step}_visual_prompt.txt")
+                self.memory.get_formatted_history(),
+                save_prompt_path=os.path.join("outputs", f"step_{step}_visual_prompt.txt")
             )
             LogTool.perception(
                 perception.get('status'), 
@@ -66,6 +69,9 @@ class AgentLoop:
             
             html_with_ids = self.page.content()
             cleaned_html = clean_html(html_with_ids)
+            
+            # 保存清洗后的 HTML
+            SaveTool.save_text(cleaned_html, os.path.join("outputs", f"step_{step}_cleaned.html"))
 
             # 3. 双路 RAG 检索
             top_k = int(os.getenv("TOP_K", "3"))
@@ -103,7 +109,7 @@ class AgentLoop:
                 tabs_display=tabs_display,
                 local_html=local_html,
                 history=self.memory.get_formatted_history(),
-                save_prompt_path=os.path.join("output", f"step_{step}_main_prompt.txt")
+                save_prompt_path=os.path.join("outputs", f"step_{step}_main_prompt.txt")
             )
             
             # 解析 Thought 和 Action
@@ -111,19 +117,19 @@ class AgentLoop:
             thought_match = re.search(r'Thought:\s*(.+)', response, re.DOTALL)
             thought = thought_match.group(1).split('Action:')[0].strip() if thought_match else "无思考过程"
             
-            # 支持解析多个 Action: 行
-            action_lines = re.findall(r'Action:\s*(.+)', response)
-            action_str = "; ".join(action_lines) if action_lines else "无动作指令"
+            # 仅解析第一个 Action
+            action_match = re.search(r'Action:\s*(.+)', response)
+            action_str = action_match.group(1).strip() if action_match else "无动作指令"
             
             LogTool.action(thought, action_str)
             LogTool.usage(main_usage, self.llm.get_token_usage())
             
-            if action_lines:
+            if action_match:
                 # 通过工具层（中间层）执行动作
-                success, new_page, executed_actions, action_results = self.tools.execute(action_str)
+                success, new_page, executed_action, action_result = self.tools.execute(action_str)
                 
                 # 记录记忆
-                self.memory.add_step(step + 1, thought, executed_actions, action_results, perception.get('status'))
+                self.memory.add_step(step + 1, thought, executed_action, action_result, perception.get('status'))
                 
                 if success:
                     # 如果活跃页面发生变更，同步 Loop 层的 page 引用
@@ -131,7 +137,7 @@ class AgentLoop:
                         self.page = new_page
                     
                     # 检查是否包含 finish 动作
-                    if any("finish" in a.lower() for a in executed_actions):
+                    if "finish" in executed_action.lower():
                         LogTool.info("任务完成！")
                         break
                 else:
@@ -142,7 +148,7 @@ class AgentLoop:
             else:
                 LogTool.error("未找到有效的 Action 指令。")
                 # 记录空动作到记忆
-                self.memory.add_step(step + 1, thought, ["无动作"], ["不合法: 未输出 Action"], perception.get('status'))
+                self.memory.add_step(step + 1, thought, "无动作", "不合法: 未输出 Action", perception.get('status'))
             
             # 记忆压缩
             if self.memory.should_compress():

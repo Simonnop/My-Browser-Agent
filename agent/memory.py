@@ -9,15 +9,15 @@ class AgentMemory:
         self.history: List[Dict[str, Any]] = []
         self.past_summary: str = "暂无更早的历史记录总结。"
 
-    def add_step(self, step: int, thought: str, actions: List[str], action_results: List[str], perception_status: str):
+    def add_step(self, step: int, thought: str, action: str, action_result: str, perception_status: str):
         """
-        添加一个步骤的执行记录，包含多个动作及其结果
+        添加一个步骤的执行记录
         """
         self.history.append({
             "step": step,
             "thought": thought,
-            "actions": actions,
-            "action_results": action_results,
+            "action": action,
+            "action_result": action_result,
             "status": perception_status
         })
 
@@ -41,10 +41,8 @@ class AgentMemory:
 
         # 格式化需要压缩的历史
         history_text = ""
-        for entry in to_compress:
-            actions_str = ", ".join(entry['actions'])
-            results_str = ", ".join(entry['action_results'])
-            history_text += f"Step {entry['step']}: Thought: {entry['thought']}, Actions: [{actions_str}], Results: [{results_str}], Perception: {entry['status']}\n"
+        for entry in self.history[:num_to_compress]:
+            history_text += f"Step {entry['step']}: Thought: {entry['thought']}, Action: {entry['action']}, Result: {entry['action_result']}, Perception: {entry['status']}\n"
 
         # 调用 LLM 进行总结
         new_summary, usage = llm_client.ask_for_summary(history_text, self.past_summary)
@@ -64,8 +62,7 @@ class AgentMemory:
             for entry in self.history:
                 lines.append(f"Step {entry['step']}:")
                 lines.append(f"  Thought: {entry['thought']}")
-                for i, (act, res) in enumerate(zip(entry['actions'], entry['action_results'])):
-                    lines.append(f"  Action {i+1}: {act} -> {res}")
+                lines.append(f"  Action: {entry['action']} -> {entry['action_result']}")
                 lines.append(f"  Final Status: {entry['status']}")
             
         return "\n".join(lines)

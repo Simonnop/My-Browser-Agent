@@ -16,7 +16,8 @@ class BrowserActions:
         验证元素是否合法，例如 div 不能输入文本
         """
         selector = f'[data-agent-id="{agent_id}"]'
-        el = self.page.locator(selector)
+        # 使用 first() 处理可能的重复 ID 情况，增强鲁棒性
+        el = self.page.locator(selector).first
         
         # 检查是否存在
         if el.count() == 0:
@@ -32,32 +33,65 @@ class BrowserActions:
             if action_type == "select" and tag_name != "select":
                 raise ValueError(f"节点 ID {agent_id} (标签: {tag_name}) 不是 select 标签，无法执行选择操作")
 
-    def click(self, agent_id: str):
+    def click(self, agent_id: str, by_pos: bool = False):
         """
-        根据 data-agent-id 点击元素
+        执行点击操作。
+        :param agent_id: 节点 ID
+        :param by_pos: 是否通过坐标点击。若为 True，则计算该元素中心坐标并执行物理点击 (mouse.click)。
         """
-        self._validate_element(agent_id, "click")
         selector = f'[data-agent-id="{agent_id}"]'
-        self.page.click(selector, timeout=self.timeout)
+        el = self.page.locator(selector).first
+        
+        # 检查是否存在
+        if el.count() == 0:
+            raise ValueError(f"节点 ID {agent_id} 不存在于当前页面")
+
+        if by_pos:
+            # 方案 A: 物理坐标点击 (针对该 ID 对应的节点)
+            box = el.bounding_box()
+            if not box:
+                raise ValueError(f"无法获取节点 ID {agent_id} 的坐标，该元素可能不可见")
+            
+            target_x = box['x'] + box['width'] / 2
+            target_y = box['y'] + box['height'] / 2
+            
+            self.page.mouse.click(target_x, target_y)
+        else:
+            # 方案 B: Playwright 元素点击 (默认，带自动滚动和可见性检查)
+            el.click(timeout=self.timeout)
+        
         # 等待动作完成后的潜在加载
         try:
             self.page.wait_for_load_state("networkidle", timeout=self.timeout)
         except Exception:
             pass
 
-    def type_text(self, agent_id: str, text: str, press_enter: bool = True):
+    def type_text(self, text: str, agent_id: Optional[str] = None):
         """
-        根据 data-agent-id 输入文本，增强健壮性
+        输入文本。
+        如果提供了 agent_id，则先定位元素并尝试输入；
+        如果没有提供 agent_id，则直接在当前焦点处模拟键盘输入。
         """
-        self._validate_element(agent_id, "type")
-        selector = f'[data-agent-id="{agent_id}"]'
-        
-        try:
-            # 1. 尝试直接使用 fill
-            self.page.fill(selector, text, timeout=self.timeout)
-        except Exception:
-            # 2. 如果 fill 失败，尝试点击该元素并使用键盘输入
-            self.page.click(selector, timeout=self.timeout)
+        if agent_id:
+            self._validate_element(agent_id, "type")
+            selector = f'[data-agent-id="{agent_id}"]'
+            
+            try:
+                # 1. 尝试直接使用 fill
+                self.page.fill(selector, text, timeout=self.timeout)
+            except Exception:
+                # 2. 如果 fill 失败，尝试通过坐标点击该元素并使用键盘输入
+                box = self.page.locator(selector).bounding_box()
+                if box:
+                    cx = box['x'] + box['width'] / 2
+                    cy = box['y'] + box['height'] / 2
+                    self.page.mouse.click(cx, cy)
+                else:
+                    self.page.click(selector, timeout=self.timeout)
+                
+                self.page.keyboard.type(text)
+        else:
+            # 直接模拟键盘输入
             self.page.keyboard.type(text)
         
         try:
@@ -81,13 +115,16 @@ class BrowserActions:
         selector = f'[data-agent-id="{agent_id}"]'
         self.page.select_option(selector, option, timeout=self.timeout)
 
-    def press(self, agent_id: str, key: str):
+    def press(self, key: str, agent_id: Optional[str] = None):
         """
-        在特定元素上按键
+        在特定元素上按键，如果未提供 agent_id 则在当前焦点处按键
         """
-        self._validate_element(agent_id, "press")
-        selector = f'[data-agent-id="{agent_id}"]'
-        self.page.press(selector, key, timeout=self.timeout)
+        if agent_id:
+            self._validate_element(agent_id, "press")
+            selector = f'[data-agent-id="{agent_id}"]'
+            self.page.press(selector, key, timeout=self.timeout)
+        else:
+            self.page.keyboard.press(key)
 
     def hover(self, agent_id: str):
         """
@@ -137,17 +174,10 @@ class BrowserActions:
 
     def scroll(self, x: int = 0, y: int = 800):
         """
-        更稳定的滚动逻辑：优先使用 JS 注入，回退到鼠标滚轮
+        仅使用物理滚轮模拟滚动
         """
-        try:
-            # 1. 尝试使用 JavaScript 滚动（最稳定，不受鼠标焦点影响）
-            self.page.evaluate(f"window.scrollBy({{ left: {x}, top: {y}, behavior: 'smooth' }})")
-            # 给予平滑滚动一点时间
-            self.page.wait_for_timeout(1000)
-        except Exception:
-            # 2. 如果 JS 失败，尝试模拟物理滚轮
-            self.page.mouse.wheel(x, y)
-            time.sleep(1)
+        self.page.mouse.wheel(x, y)
+        self.page.wait_for_timeout(1000)
 
     def wait(self, seconds: float = 2.0):
         """
@@ -164,19 +194,28 @@ class BrowserActions:
         from tools.log import LogTool
         
         try:
-            # 1. click(data-agent-id="...")
-            click_match = re.match(r'click\(data-agent-id="(\d+)"\)', action_str)
+            # 1. click(data-agent-id="...", by_pos=True/False)
+            click_match = re.match(r'click\(data-agent-id="(\d+)"(?:,\s*by_pos=(True|False))?\)', action_str)
             if click_match:
                 agent_id = click_match.group(1)
-                self.click(agent_id)
+                by_pos_str = click_match.group(2)
+                by_pos = (by_pos_str == "True")
+                self.click(agent_id=agent_id, by_pos=by_pos)
                 return True, None, "成功"
 
-            # 2. type(data-agent-id="...", text="...")
-            type_match = re.match(r'type\(data-agent-id="(\d+)",\s*text="(.+)"\)', action_str)
-            if type_match:
-                agent_id = type_match.group(1)
-                text = type_match.group(2)
-                self.type_text(agent_id, text)
+            # 2. type(text="...", data-agent-id="...") 或 type(text="...")
+            # 支持有 ID 和无 ID 两种情况
+            type_with_id_match = re.match(r'type\(data-agent-id="(\d+)",\s*text="(.+)"\)', action_str)
+            type_no_id_match = re.match(r'type\(text="(.+)"\)', action_str)
+            
+            if type_with_id_match:
+                agent_id = type_with_id_match.group(1)
+                text = type_with_id_match.group(2)
+                self.type_text(text=text, agent_id=agent_id)
+                return True, None, "成功"
+            elif type_no_id_match:
+                text = type_no_id_match.group(1)
+                self.type_text(text=text)
                 return True, None, "成功"
 
             # 3. clear(data-agent-id="...")
@@ -194,12 +233,18 @@ class BrowserActions:
                 self.select(agent_id, option)
                 return True, None, "成功"
 
-            # 5. press(data-agent-id="...", key="...")
-            press_match = re.match(r'press\(data-agent-id="(\d+)",\s*key="(.+)"\)', action_str)
-            if press_match:
-                agent_id = press_match.group(1)
-                key = press_match.group(2)
-                self.press(agent_id, key)
+            # 5. press(data-agent-id="...", key="...") 或 press(key="...")
+            press_with_id_match = re.match(r'press\(data-agent-id="(\d+)",\s*key="(.+)"\)', action_str)
+            press_no_id_match = re.match(r'press\(key="(.+)"\)', action_str)
+            
+            if press_with_id_match:
+                agent_id = press_with_id_match.group(1)
+                key = press_with_id_match.group(2)
+                self.press(key=key, agent_id=agent_id)
+                return True, None, "成功"
+            elif press_no_id_match:
+                key = press_no_id_match.group(1)
+                self.press(key=key)
                 return True, None, "成功"
 
             # 6. hover(data-agent-id="...")
