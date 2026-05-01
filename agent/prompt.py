@@ -34,9 +34,9 @@ VISUAL_PERCEPTION_PROMPT = """
 
 # 记忆压缩 Prompt 模板
 MEMORY_COMPRESSION_PROMPT = """
-你是一个记忆管理助手。请将以下浏览器 Agent 的执行历史压缩成一段简短的总结。
+你是一个记忆管理助手。请将以下浏览器 Agent 的执行历史压缩成一段总结。
 总结应保留已完成的关键动作、发现的重要信息以及目前所处的总体进度，以便 Agent 在后续步骤中参考。
-请输出更新后的简短总结（控制在 100 字以内）。
+请输出更新后的总结。
 
 执行历史:
 {history_to_compress}

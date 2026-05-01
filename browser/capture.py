@@ -25,7 +25,7 @@ class BrowserCapture:
                 title = p.title()
                 url = p.url
                 is_current = " (当前)" if p == current_page else ""
-                tabs_info.append(f"[{i}] {title} - {url}{is_current}")
+                tabs_info.append(f"[{i}] {title} {is_current}")
             except Exception:
                 # 忽略正在关闭或发生异常的页面
                 continue
