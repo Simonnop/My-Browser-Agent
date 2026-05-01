@@ -1,4 +1,0 @@
-### Task Skills:
-- **04-30 Learn**: QQ邮箱写信流程：1. 登录后点击左侧'写信'按钮；2. 收件人输入框使用input.cmp-account-input[aria-label='收件人']；3. 主题输入框使用input.subject-input[aria-label='主题']；4. 正文区域使用div.xmail-cmp-editor-content[aria-label='邮件正文']，需先click再fill；5. 发送按钮使用div.ui-btn-text:has-text('发送')。注意：正文区域是contenteditable的div，fill操作前必须先点击使其获得焦点。
-- **04-30 Learn**: QQ邮箱回复邮件流程：1. 在收件箱中找到目标邮件并点击打开；2. 点击邮件上方的'回复'按钮进入回复界面；3. 正文区域使用div.xmail-cmp-editor-content[aria-label='邮件正文']，需先click再fill（contenteditable div）；4. 发送按钮使用div.ui-btn-text:has-text('发送')。注意：点击发送后页面会显示'邮件已发送'的toast提示，然后自动返回收件箱列表。
-- **04-30 Learn**: QQ邮箱回复邮件流程：1. 在收件箱中找到目标邮件并点击打开；2. 点击邮件上方的'回复'按钮进入回复界面；3. 正文区域使用div.xmail-cmp-editor-content[aria-label='邮件正文']，需先click再fill（contenteditable div）；4. 发送按钮使用div.ui-btn-text:text('发送')。注意：点击发送后页面会显示'邮件已发送'的toast提示，然后自动返回收件箱列表。
