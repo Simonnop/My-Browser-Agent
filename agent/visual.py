@@ -8,8 +8,8 @@ class VisualSubagent:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    def perceive(self, screenshot_path: str, task_description: str, tabs_display: str, history: str, save_prompt_path: str = None) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    def perceive(self, screenshot_path: str, task_description: str, history: str, save_prompt_path: str = None) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """
         分析截图，输出 (感知结果dict, 本次消耗usage_dict)
         """
-        return self.llm.ask_visual_subagent(screenshot_path, task_description, tabs_display, history, save_prompt_path=save_prompt_path)
+        return self.llm.ask_visual_subagent(screenshot_path, task_description, history, save_prompt_path=save_prompt_path)

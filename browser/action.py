@@ -5,11 +5,30 @@ from typing import Optional, Tuple
 
 class BrowserActions:
     """
-    提供基础的浏览器操作
+    提供基础的浏览器操作，自动维护单标签页模式
     """
     def __init__(self, page: Page):
         self.page = page
         self.timeout = int(os.getenv("ACTION_TIMEOUT_MS", "3000"))
+
+    def _sync_page(self):
+        """
+        动作执行后同步页面引用：如果有新开的标签页，切到最新并关闭其余
+        """
+        self.page.wait_for_timeout(500)
+        alive = [p for p in self.page.context.pages if not p.is_closed()]
+        if len(alive) > 1:
+            newest = alive[-1]
+            if newest != self.page:
+                newest.bring_to_front()
+            for p in alive[:-1]:
+                try:
+                    p.close()
+                except Exception:
+                    pass
+            self.page = self.page.context.pages[0]
+        elif len(alive) == 1:
+            self.page = alive[0]
 
     def _validate_element(self, agent_id: str, action_type: str):
         """
@@ -148,30 +167,6 @@ class BrowserActions:
         except Exception:
             pass
 
-    def close_tab(self):
-        """
-        关闭当前标签页并返回新的活跃页面
-        """
-        context = self.page.context
-        self.page.close()
-        remaining_pages = context.pages
-        if remaining_pages:
-            new_page = remaining_pages[0]
-            new_page.bring_to_front()
-            return new_page
-        return None
-
-    def switch_tab(self, index: int):
-        """
-        根据索引切换标签页
-        """
-        pages = self.page.context.pages
-        if 0 <= index < len(pages):
-            new_page = pages[index]
-            new_page.bring_to_front()
-            return new_page
-        raise ValueError(f"Invalid tab index: {index}")
-
     def scroll(self, x: int = 0, y: int = 800):
         """
         仅使用物理滚轮模拟滚动
@@ -185,14 +180,14 @@ class BrowserActions:
         """
         time.sleep(seconds)
 
-    def execute_action(self, action_str: str) -> Tuple[bool, Optional[Page], str]:
+    def execute_action(self, action_str: str) -> Tuple[bool, str]:
         """
         解析并执行动作字符串。
-        返回: (success: bool, new_page: Optional[Page], message: str)
+        返回: (success: bool, message: str)
         """
         import re
         from tools.log import LogTool
-        
+
         try:
             # 1. click(data-agent-id="...", by_pos=True/False)
             click_match = re.match(r'click\(data-agent-id="(\d+)"(?:,\s*by_pos=(True|False))?\)', action_str)
@@ -201,29 +196,28 @@ class BrowserActions:
                 by_pos_str = click_match.group(2)
                 by_pos = (by_pos_str == "True")
                 self.click(agent_id=agent_id, by_pos=by_pos)
-                return True, None, "成功"
+                return True, "成功"
 
             # 2. type(text="...", data-agent-id="...") 或 type(text="...")
-            # 支持有 ID 和无 ID 两种情况
             type_with_id_match = re.match(r'type\(data-agent-id="(\d+)",\s*text="(.+)"\)', action_str)
             type_no_id_match = re.match(r'type\(text="(.+)"\)', action_str)
-            
+
             if type_with_id_match:
                 agent_id = type_with_id_match.group(1)
                 text = type_with_id_match.group(2)
                 self.type_text(text=text, agent_id=agent_id)
-                return True, None, "成功"
+                return True, "成功"
             elif type_no_id_match:
                 text = type_no_id_match.group(1)
                 self.type_text(text=text)
-                return True, None, "成功"
+                return True, "成功"
 
             # 3. clear(data-agent-id="...")
             clear_match = re.match(r'clear\(data-agent-id="(\d+)"\)', action_str)
             if clear_match:
                 agent_id = clear_match.group(1)
                 self.clear(agent_id)
-                return True, None, "成功"
+                return True, "成功"
 
             # 4. select(data-agent-id="...", option="...")
             select_match = re.match(r'select\(data-agent-id="(\d+)",\s*option="(.+)"\)', action_str)
@@ -231,28 +225,28 @@ class BrowserActions:
                 agent_id = select_match.group(1)
                 option = select_match.group(2)
                 self.select(agent_id, option)
-                return True, None, "成功"
+                return True, "成功"
 
             # 5. press(data-agent-id="...", key="...") 或 press(key="...")
             press_with_id_match = re.match(r'press\(data-agent-id="(\d+)",\s*key="(.+)"\)', action_str)
             press_no_id_match = re.match(r'press\(key="(.+)"\)', action_str)
-            
+
             if press_with_id_match:
                 agent_id = press_with_id_match.group(1)
                 key = press_with_id_match.group(2)
                 self.press(key=key, agent_id=agent_id)
-                return True, None, "成功"
+                return True, "成功"
             elif press_no_id_match:
                 key = press_no_id_match.group(1)
                 self.press(key=key)
-                return True, None, "成功"
+                return True, "成功"
 
             # 6. hover(data-agent-id="...")
             hover_match = re.match(r'hover\(data-agent-id="(\d+)"\)', action_str)
             if hover_match:
                 agent_id = hover_match.group(1)
                 self.hover(agent_id)
-                return True, None, "成功"
+                return True, "成功"
 
             # 7. scroll(x=..., y=...)
             scroll_match = re.match(r'scroll\(x=(-?\d+),\s*y=(-?\d+)\)', action_str)
@@ -260,48 +254,35 @@ class BrowserActions:
                 x = int(scroll_match.group(1))
                 y = int(scroll_match.group(2))
                 self.scroll(x, y)
-                return True, None, "成功"
+                return True, "成功"
 
             # 8. wait(ms=...)
             wait_match = re.match(r'wait\(ms=(\d+)\)', action_str)
             if wait_match:
                 ms = int(wait_match.group(1))
                 self.wait(ms / 1000.0)
-                return True, None, "成功"
+                return True, "成功"
 
             # 9. goto(url="...")
             goto_match = re.match(r'goto\(url="(.+)"\)', action_str)
             if goto_match:
                 url = goto_match.group(1)
                 self.goto(url)
-                return True, None, "成功"
+                return True, "成功"
 
-            # 10. switch_tab(index=...)
-            switch_match = re.match(r'switch_tab\(index=(\d+)\)', action_str)
-            if switch_match:
-                index = int(switch_match.group(1))
-                new_page = self.switch_tab(index)
-                return True, new_page, "成功"
-                
-            # 11. close_tab()
-            close_match = re.match(r'close_tab\(\)', action_str)
-            if close_match:
-                new_page = self.close_tab()
-                return True, new_page, "成功"
-
-            # 12. finish(reason="...")
+            # 10. finish(reason="...")
             finish_match = re.match(r'finish\(reason="(.+)"\)', action_str)
             if finish_match:
-                return True, None, "成功"
+                return True, "成功"
 
             msg = f"未识别的动作格式: {action_str}"
             LogTool.error(msg)
-            return False, None, "不合法: 格式错误"
+            return False, "不合法: 格式错误"
         except ValueError as e:
             msg = f"动作不合法: {str(e)}"
             LogTool.error(msg)
-            return False, None, f"不合法: {str(e)}"
+            return False, f"不合法: {str(e)}"
         except Exception as e:
             msg = f"执行动作时发生错误: {str(e)}"
             LogTool.error(msg)
-            return False, None, f"失败: {str(e)}"
+            return False, f"失败: {str(e)}"

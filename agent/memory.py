@@ -1,4 +1,7 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
+from tools.collect_store import read_collect_context_text
+
 
 class AgentMemory:
     """
@@ -8,6 +11,7 @@ class AgentMemory:
         self.max_history = max_history
         self.history: List[Dict[str, Any]] = []
         self.past_summary: str = "暂无更早的历史记录总结。"
+        self.collected: List[Dict[str, Any]] = []
 
     def add_step(self, step: int, thought: str, action: str, action_result: str, perception_status: str):
         """
@@ -27,7 +31,7 @@ class AgentMemory:
         """
         return len(self.history) > self.max_history
 
-    def compress(self, llm_client):
+    def compress(self, llm_client, task: str):
         """
         使用 LLM 压缩记忆: 将历史记录合并到 past_summary 中
         """
@@ -45,7 +49,7 @@ class AgentMemory:
             history_text += f"Step {entry['step']}: Thought: {entry['thought']}, Action: {entry['action']}, Result: {entry['action_result']}, Perception: {entry['status']}\n"
 
         # 调用 LLM 进行总结
-        new_summary, usage = llm_client.ask_for_summary(history_text, self.past_summary)
+        new_summary, usage = llm_client.ask_for_summary(history_text, self.past_summary, task)
         self.past_summary = new_summary
         
         return usage
@@ -67,9 +71,25 @@ class AgentMemory:
             
         return "\n".join(lines)
 
+    def record_collection(self, task: str, data: List[Dict[str, Any]]):
+        """
+        记录一次采集任务的结果
+        """
+        if data:
+            self.collected.append({"task": task, "items": data})
+
+    def get_collected_context(self, use_collect_info: bool = False, top_k: int = 3) -> str:
+        """
+        当视觉子 Agent 的 use_collect_info 为 true 时，读取固定采集文件全文注入提示词。
+        """
+        if not use_collect_info:
+            return ""
+        return read_collect_context_text()
+
     def clear(self):
         """
         清空记忆
         """
         self.history = []
         self.past_summary = "暂无更早的历史记录总结。"
+        self.collected.clear()

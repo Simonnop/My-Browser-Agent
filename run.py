@@ -71,7 +71,7 @@ def main():
                 user_data_dir=user_data_path,
                 headless=headless,
                 no_viewport=False,
-                viewport={'width': 1280, 'height': 800},
+                viewport={'width': 1920, 'height': 1080},
                 user_agent=user_agent,
                 args=extra_args,
                 ignore_default_args=["--enable-automation"], # 核心：移除自动化标志
@@ -87,7 +87,7 @@ def main():
                 ignore_default_args=["--enable-automation"]
             )
             context = browser.new_context(
-                viewport={'width': 1280, 'height': 800},
+                viewport={'width': 1920, 'height': 1080},
                 user_agent=user_agent,
                 locale="zh-CN",
                 timezone_id="Asia/Shanghai"
