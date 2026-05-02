@@ -5,7 +5,7 @@ import re
 from typing import Optional, Dict, List, Any, Tuple
 from openai import OpenAI
 from dotenv import load_dotenv
-from .prompt import VISUAL_PERCEPTION_PROMPT, MAIN_AGENT_PROMPT, MEMORY_COMPRESSION_PROMPT, COLLECT_EXTRACT_PROMPT
+from .prompt import VISUAL_PERCEPTION_PROMPT, MAIN_AGENT_PROMPT, MEMORY_COMPRESSION_PROMPT, COLLECT_EXTRACT_PROMPT, DECIDE_PROMPT
 from tools.log import LogTool
 
 load_dotenv()
@@ -96,6 +96,46 @@ class LLMClient:
             save_prompt_path=save_prompt_path
         )
         
+        return res_content, usage_dict
+
+    def ask_decide(self, screenshot_path: str, task: str, step: int, max_steps: int,
+                   local_html: str, history: str,
+                   save_prompt_path: str = None) -> Tuple[str, Dict[str, int]]:
+        """
+        合并决策调用（LangGraph 版本）：截图 + 局部 HTML → Thought + focus_point + keywords + Action
+        返回: (LLM 原始输出文本, 本次消耗 usage_dict)
+        """
+        with open(screenshot_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+        prompt = DECIDE_PROMPT.format(
+            task=task,
+            step=step,
+            max_steps=max_steps,
+            local_html=local_html,
+            history=history,
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ]
+
+        res_content, usage_dict = self._call_llm(
+            messages=messages,
+            save_prompt_path=save_prompt_path
+        )
+
         return res_content, usage_dict
 
     def ask_for_summary(self, history_to_compress: str, existing_summary: str, task: str) -> Tuple[str, Dict[str, int]]:
