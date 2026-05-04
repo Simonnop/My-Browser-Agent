@@ -1,5 +1,6 @@
 # Outputs (run logs and snapshots)
 outputs/
+logs/
 
 # Browser profile data
 chrome_profile/

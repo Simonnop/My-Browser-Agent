@@ -1,36 +1,31 @@
-from typing import TypedDict, Any, Optional
+from typing import Annotated, TypedDict, List
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
-
-class AgentState(TypedDict, total=False):
-    # 任务
-    task: str                     # 用户任务描述
-    step: int                     # 当前步骤（从 1 开始）
-    max_steps: int                # 最大步数
-
-    # 浏览器（不可序列化，仅运行时使用）
-    page: Any                     # Playwright Page 对象
-    screenshot_path: str          # 当前截图路径
-    page_info: str                # 当前页面标题和 URL 摘要
-
-    # RAG 输入（上一轮 LLM 输出，供本轮 RAG 检索使用）
-    focus_point: list             # 上一轮聚焦坐标 [x, y]（首回合默认视口中心）
-    keywords: list                # 上一轮页面关键词列表（首回合从任务描述提取）
-
-    # RAG 结果
-    space_nodes: list             # 空间 RAG 命中节点 ID 列表
-    key_nodes: list               # 语义 RAG 命中节点 ID 列表
-    local_html: str               # 融合后的局部 HTML
-
-    # LLM 决策输出
-    thought: str                  # LLM 思考过程
-    action: str                   # LLM 输出的原始动作字符串
-
-    # 动作执行结果
-    action_result: str            # 动作执行结果消息
-    action_success: bool          # 动作是否成功
-    is_finish: bool               # 是否触发了 finish 动作
-
-    # 记忆
-    history: list                 # 步骤历史记录列表
-    past_summary: str             # 压缩后的历史总结
-    token_usage: dict              # Token 消耗统计
+class AgentState(TypedDict):
+    """
+    Browser Agent Current State
+    """
+    # 任务说明与目标
+    task: str
+    
+    # Message History (对话/执行历史)
+    messages: Annotated[List[BaseMessage], add_messages]
+    
+    # 页面当前数据 (在 observe 步骤产出)
+    current_som_image: str  # base64 或者是文件路径
+    current_som_mapping: str # JSON 字符串形式的映射，发给LLM
+    current_focus_image: str # 当前光标所在的截图 (base64)
+    current_scroll_image: str # 滚动区域截图 (base64)
+    
+    # Agent 返回的 Function Calls 序列 (用于 actions 节点)
+    next_action: dict
+    
+    # 更新的 TODO List (LLM 每轮都会返回最新的计划)
+    todo_list: str
+    
+    # 控制参数
+    step_count: int
+    max_steps: int
+    is_finished: bool
+    run_dir: str

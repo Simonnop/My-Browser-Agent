@@ -1,275 +1,256 @@
+import json
+import base64
+from datetime import datetime
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from graph.state import AgentState
+from tools.observers import get_som_state, get_scroll_state, get_focus_state
+from tools.actions import action_click, action_type, action_clear, action_scroll, action_press_enter, action_goto_url, action_human_intervention
+
 import os
-import re
-from typing import Optional
+from langchain_openai import ChatOpenAI
+from dotenv import load_dotenv
 
-from .state import AgentState
-from .utils import format_history_entry, get_formatted_history
+load_dotenv()
 
-from agent.llm import LLMClient
-from agent.memory import add_history_entry, should_compress
-from agent.tools import AgentTools
-from browser.capture import BrowserCapture
-from browser.table import Indexer
-from browser.clean import clean_html
-from rag.key_rag import KeyRAG
-from rag.space_rag import SpaceRAG
-from rag.fusion import FusionModule
-from tools.log import LogTool
-from tools.save import SaveTool
+# 初始化 LLM 
+# 动态加载额外请求体（如关闭特定的思考/搜索标志）
+extra_body = {}
+if os.getenv("DISABLE_LLM_THINKING") == "true":
+    # 兼容常见的关闭大模型自身思考/搜索的 flag，如果有特殊的可以直接写在这里
+    extra_body.update({
+        "disable_thinking": True, 
+        "enable_reasoning": False,
+        "reasoning_format": "none",
+        "search": False,
+        "thinking": {"type": "disabled"}
+    })
 
-# 模块级单例，确保 Token 统计跨节点累积
-_llm_client: Optional[LLMClient] = None
+llm_kwargs = {}
+if extra_body:
+    llm_kwargs["extra_body"] = extra_body
+    
+llm = ChatOpenAI(
+    model=os.getenv('LLM_MODEL', 'gpt-4o'),
+    openai_api_key=os.getenv('LLM_API_KEY'),
+    openai_api_base=os.getenv('LLM_BASE_URL'),
+    temperature=0,
+    **llm_kwargs
+)
 
-
-def _get_llm() -> LLMClient:
-    global _llm_client
-    if _llm_client is None:
-        _llm_client = LLMClient()
-    return _llm_client
-
-
-# ───────────────────── perceive ─────────────────────
-
-
-def perceive_node(state: AgentState) -> dict:
+def observe_node(state: AgentState) -> dict:
     """
-    截图 + 获取页面信息（无 LLM 调用）。
+    负责提取当前浏览器状态：获取 SOM、可滚动区域、当前焦点区域
     """
-    page = state["page"]
-    step = state["step"] + 1
-
-    LogTool.step(step, state["max_steps"])
-
-    # 合并标签页，同步引用
-    page = BrowserCapture.ensure_single_tab(page)
-    page_info = BrowserCapture.get_page_info(page)
-    LogTool.info(page_info)
-
-    # 截图
-    screenshot_path = os.path.join("outputs", f"step_{step}.jpg")
-    fix_path = os.path.join("outputs", "_current_screen.jpg")
-    page.screenshot(path=screenshot_path, animations="disabled", caret="initial")
-    page.screenshot(path=fix_path, animations="disabled", caret="initial")
-    LogTool.info(f"截图完成: {screenshot_path}")
-
+    print("[Observe] 当前页面扫描和截图标记...")
+    som_b64, mapping_str = get_som_state()
+    scroll_b64 = get_scroll_state()
+    focus_b64 = get_focus_state()
+    
+    # 记录每个步骤的图片输出
+    step = state.get("step_count", 0)
+    run_dir = state.get("run_dir", "logs/default")
+    round_dir = os.path.join(run_dir, f"round_{step}")
+    os.makedirs(round_dir, exist_ok=True)
+    
+    if som_b64:
+        with open(os.path.join(round_dir, "som_image.png"), "wb") as f:
+            f.write(base64.b64decode(som_b64))
+    if scroll_b64:
+        with open(os.path.join(round_dir, "scroll_image.png"), "wb") as f:
+            f.write(base64.b64decode(scroll_b64))
+    if focus_b64:
+        with open(os.path.join(round_dir, "focus_image.png"), "wb") as f:
+            f.write(base64.b64decode(focus_b64))
+            
+    with open(os.path.join(round_dir, "som_mapping.json"), "w", encoding="utf-8") as f:
+        f.write(mapping_str)
+    
     return {
-        "page": page,
-        "step": step,
-        "screenshot_path": screenshot_path,
-        "page_info": page_info,
+        "current_som_image": som_b64,
+        "current_som_mapping": mapping_str,
+        "current_scroll_image": scroll_b64,
+        "current_focus_image": focus_b64
     }
 
+def build_llm_prompt(state: AgentState) -> list:
+    """构建包含图片的多模态 Message"""
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    system_prompt = f"""你是一个智能浏览器 Agent。你的目标是：
+{state['task']}
 
-# ───────────────── index_and_rag ───────────────────
+当前时间：{current_time}
 
+当前你的 TODO List：
+{state.get('todo_list', '暂无计划，请你制定。')}
 
-def index_and_rag_node(state: AgentState) -> dict:
+注意：如果你发现自己在多轮操作中反复尝试同一个目标却一直没有成功（例如找不到元素、页面没反应、登录需要验证码或扫码等异常情况），请立刻使用 human_intervention 动作呼叫人工协助，询问人类接下来该怎么做。
+
+你需要分析当前页面的状态，返回以下 JSON 格式的输出(不要包含多余的字符)：
+{{
+  "thought": "你的思考过程...",
+  "updated_todo_list": "更新后的TODO List...",
+  "action": {{
+    "type": "click/type/clear/scroll/press_enter/goto_url/human_intervention/exit",
+    "params": {{
+      // 如果 type=click: "element_id": "1"
+      // 如果 type=type: "text": "内容"
+      // 如果 type=clear: 这里不需要参数
+      // 如果 type=press_enter: 这里不需要参数
+      // 如果 type=goto_url: "url": "https://www.google.com"
+      // 如果 type=human_intervention: "question": "你想问的问题"
+      // 如果 type=exit: "reason": "任务完成原因"
+    }}
+  }}
+}}
+"""
+    
+    # 构建人类消息，将多模态数据附上
+    content = [
+        {"type": "text", "text": "以下是当前页面的状态：\n1. 带可交互元素标注的 Set-Of-Mark"},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{state['current_som_image']}"}},
+        {"type": "text", "text": "2. 带滚动区域标注的页面"},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{state['current_scroll_image']}"}}
+    ]
+    
+    if state['current_focus_image']:
+        content.append({"type": "text", "text": "3. 当前有光标聚焦的输入框区域"})
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{state['current_focus_image']}"}})
+        
+    # 加入历史执行轨迹，以支持 ReAct 逻辑，而不包含之前的巨图
+    messages = [SystemMessage(content=system_prompt)]
+    
+    # 筛选之前的 message history（由于包含太多多模态历史会导致Token超载，我们把历史记录洗成纯文本）
+    for msg in state.get("messages", []):
+        if isinstance(msg, AIMessage):
+            messages.append(AIMessage(content=msg.content))
+        elif isinstance(msg, HumanMessage):
+            # 去除原有的强结构化字典内容（即曾经的多模态输入），只有纯文本留存
+            if isinstance(msg.content, list):
+                text_only = "\n".join([item["text"] for item in msg.content if isinstance(item, dict) and item.get("type") == "text"])
+                if text_only:
+                    messages.append(HumanMessage(content=f"(历史输入)\n{text_only}"))
+            else:
+                messages.append(HumanMessage(content=msg.content))
+                
+    # 把本轮的多模态作为最后一条附加进去
+    messages.append(HumanMessage(content=content))
+        
+    return messages
+
+def think_node(state: AgentState) -> dict:
     """
-    DOM 索引构建 + 双路 RAG 检索 + 融合。
-    使用上一轮 LLM 输出的 focus_point 和 keywords。
+    负责调用 LLM，分析当前状况，给出下一步的 Action 和更新的 TODO.
     """
-    page = state["page"]
-    step = state["step"]
-    focus_point = state.get("focus_point", [])
-    keywords = state.get("keywords", [])
+    print("[Think] LLM 正在思考...")
+    prompt = build_llm_prompt(state)
+    
+    # 构建 log 路径
+    step = state.get("step_count", 0)
+    run_dir = state.get("run_dir", "logs/default")
+    round_dir = os.path.join(run_dir, f"round_{step}")
+    os.makedirs(round_dir, exist_ok=True)
+    
+    # 抽取并保存 prompt (省略超长 base64 防止撑爆看日志的体验)
+    prompt_log = []
+    for msg in prompt:
+        if isinstance(msg, SystemMessage):
+            prompt_log.append({"role": "system", "content": msg.content})
+        elif isinstance(msg, HumanMessage):
+            clean_content = []
+            if isinstance(msg.content, list):
+                for item in msg.content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        clean_content.append({"type": "image_url", "image_url": "data:image/png;base64,<BASE64_IMAGE_OMITTED_IN_LOG>"})
+                    else:
+                        clean_content.append(item)
+                prompt_log.append({"role": "human", "content": clean_content})
+            else:
+                prompt_log.append({"role": "human", "content": msg.content})
+                
+    with open(os.path.join(round_dir, "prompt.json"), "w", encoding="utf-8") as f:
+        json.dump(prompt_log, f, ensure_ascii=False, indent=2)
 
-    LogTool.info("正在构建 DOM 索引...")
-    indexer = Indexer(page)
-    indexer.build_index()
+    response = llm.invoke(prompt)
+    
+    # 保存 response
+    with open(os.path.join(round_dir, "response.txt"), "w", encoding="utf-8") as f:
+        f.write(response.content)
+    
+    try:
+        content = response.content
+        
+        # 兼容强制带 <think> 输出的大模型（如 DeepSeek-R1 无法强制关掉的情况），人工切分过滤
+        if "<think>" in content and "</think>" in content:
+            content = content.split("</think>")[-1].strip()
+            
+        if "```json" in content:
+            content = content.split("```json")[-1].split("```")[0].strip()
+        data = json.loads(content)
+        
+        print(f"[LLM Thought]: {data.get('thought')}")
+        print(f"[LLM Action]: {data.get('action')}")
+        
+        return {
+            "next_action": data.get("action", {}),
+            "todo_list": data.get("updated_todo_list", state.get('todo_list', '')),
+            "messages": [AIMessage(content=response.content)],
+        }
+    except Exception as e:
+        print(f"[-] LLM 返回格式解析失败: {e}, Content: {response.content}")
+        return {
+            "next_action": {"type": "exit", "params": {"reason": "解析失败，异常退出"}},
+            "messages": [AIMessage(content=response.content)]
+        }
 
-    space_table = indexer.get_space_table()
-    key_table = indexer.get_key_table()
-
-    # 清洗 HTML
-    html_with_ids = page.content()
-    cleaned_html = clean_html(html_with_ids)
-    SaveTool.save_text(cleaned_html, os.path.join("outputs", f"step_{step}_cleaned.html"))
-
-    # 双路 RAG
-    top_k = int(os.getenv("TOP_K", "3"))
-    radius_percent = float(os.getenv("FOCUS_RADIUS_PERCENT", "5.0"))
-
-    space_rag = SpaceRAG(space_table)
-    key_rag = KeyRAG(key_table)
-
-    viewport_size = page.viewport_size
-    space_nodes = space_rag.search(focus_point, viewport_size, radius_percent=radius_percent)
-    key_nodes = key_rag.search(keywords, top_k=top_k)
-
-    LogTool.info(f"RAG 检索完成: 空间命中 {len(space_nodes)} 个, 语义命中 {len(key_nodes)} 个")
-
-    # 融合
-    path_depth = int(os.getenv("PATH_DEPTH", "2"))
-    fusion = FusionModule(cleaned_html)
-    local_html = fusion.fuse(key_nodes, space_nodes, path_depth=path_depth)
-
-    return {
-        "space_nodes": space_nodes,
-        "key_nodes": key_nodes,
-        "local_html": local_html,
-    }
-
-
-# ───────────────────── decide ──────────────────────
-
-
-def decide_node(state: AgentState) -> dict:
+def action_node(state: AgentState) -> dict:
     """
-    主 LLM 决策：接收截图 + 局部 HTML，输出 Thought + focus_point + keywords + Action。
+    根据 Think 节点的输出来执行具体的浏览器操作。
     """
-    step = state["step"]
-    max_steps = state["max_steps"]
-    task = state["task"]
-    screenshot_path = state["screenshot_path"]
-    local_html = state["local_html"]
-    history = state.get("history", [])
-    past_summary = state.get("past_summary", "暂无更早的历史记录总结。")
-
-    history_str = get_formatted_history(history, past_summary)
-
-    LogTool.info("正在思考下一步行动...")
-    llm = _get_llm()
-
-    raw_response, usage = llm.ask_decide(
-        screenshot_path=screenshot_path,
-        task=task,
-        step=step,
-        max_steps=max_steps,
-        local_html=local_html,
-        history=history_str,
-        save_prompt_path=os.path.join("outputs", f"step_{step}_decide_prompt.txt"),
-    )
-
-    # 解析输出
-    thought = _extract_field(raw_response, "Thought") or "无思考过程"
-    focus_point = _extract_focus_point(raw_response)
-    keywords = _extract_keywords(raw_response)
-    action = _extract_field(raw_response, "Action") or "无动作指令"
-
-    LogTool.action(thought, action)
-    LogTool.usage(usage, llm.get_token_usage())
-
-    return {
-        "thought": thought,
-        "action": action,
-        "focus_point": focus_point,
-        "keywords": keywords,
-    }
-
-
-# ───────────────── route_action ────────────────────
-
-
-MAX_HISTORY = 5
-
-
-def route_action_node(state: AgentState) -> dict:
-    """
-    执行动作并记录历史。判断是否需要压缩记忆。
-    """
-    step = state["step"]
-    thought = state["thought"]
-    action = state["action"]
-    page = state["page"]
-    history = state.get("history", [])
-
-    is_finish = False
-    action_success = False
-    action_result = ""
-
-    # 判断 finish
-    if "finish(" in action.lower():
-        reason_match = re.search(r'finish\(reason="(.+?)"\)', action)
-        reason = reason_match.group(1) if reason_match else "任务完成"
-        LogTool.info(f"任务完成: {reason}")
-        is_finish = True
-        action_success = True
-        action_result = reason
+    action = state.get("next_action", {})
+    action_type_ = action.get("type")
+    params = action.get("params", {})
+    
+    result = ""
+    print(f"[Action] 执行操作: {action_type_} with {params}")
+    
+    if action_type_ == "click":
+        el_id = params.get("element_id")
+        result = action_click(str(el_id), state["current_som_mapping"])
+        
+    elif action_type_ == "type":
+        text = params.get("text", "")
+        result = action_type(text)
+        
+    elif action_type_ == "clear":
+        result = action_clear()
+        
+    elif action_type_ == "scroll":
+        direction = params.get("direction", "down")
+        result = action_scroll(direction)
+        
+    elif action_type_ == "press_enter":
+        result = action_press_enter()
+        
+    elif action_type_ == "goto_url":
+        url = params.get("url", "")
+        result = action_goto_url(url)
+        
+    elif action_type_ == "human_intervention":
+        question = params.get("question", "需要你的帮助：")
+        result = action_human_intervention(question)
+        
+    elif action_type_ == "exit":
+        reason = params.get("reason", "任务完成")
+        result = f"Task Finished. Reason: {reason}"
+        
     else:
-        # 通过工具层执行动作
-        tools = AgentTools(page)
-        action_success, executed_action, action_result = tools.execute(action)
-        page = tools.page
-        if not action_success:
-            LogTool.error(f"动作执行失败: {action_result}")
-        else:
-            page.wait_for_timeout(1000)
-
-    # 记录历史（status 字段记录动作是否成功，供下一轮 LLM 验证）
-    status = "成功" if action_success else "失败"
-    entry = format_history_entry(step, thought, action, action_result, status)
-    history = add_history_entry(history, entry)
-
+        result = f"未知操作: {action_type_}"
+        
+    # 将操作结果变成 HumanMessage
+    new_msg = HumanMessage(content=f"上一轮动作执行结果: {result}")
+    
     return {
-        "page": page,
-        "action_result": action_result,
-        "action_success": action_success,
-        "is_finish": is_finish,
-        "history": history,
+        "messages": [new_msg],
+        "step_count": state.get("step_count", 0) + 1,
+        "is_finished": (action_type_ == "exit" or state.get("step_count", 0) >= state.get("max_steps", 10))
     }
-
-
-# ─────────────── compress_memory ───────────────────
-
-
-def compress_memory_node(state: AgentState) -> dict:
-    """
-    记忆压缩：当 history 过长时，调用 LLM 压缩历史。
-    """
-    history = state.get("history", [])
-    past_summary = state.get("past_summary", "暂无更早的历史记录总结。")
-    task = state["task"]
-
-    if not should_compress(history, MAX_HISTORY):
-        return {}
-
-    LogTool.info("正在压缩历史记忆...")
-    from agent.memory import compress_history as do_compress
-    llm = _get_llm()
-    new_summary, new_history, usage = do_compress(llm, history, past_summary, task, MAX_HISTORY)
-
-    if usage:
-        LogTool.usage(usage, llm.get_token_usage())
-
-    return {
-        "past_summary": new_summary,
-        "history": new_history,
-    }
-
-
-# ─────────────── 内部工具函数 ──────────────────────
-
-
-def _extract_field(text: str, field_name: str) -> str:
-    """从 LLM 输出中提取指定字段的值。"""
-    match = re.search(rf'{field_name}:\s*(.+)', text)
-    if match:
-        return match.group(1).strip()
-    return ""
-
-
-def _extract_focus_point(text: str) -> list:
-    """提取 focus_point 坐标。"""
-    match = re.search(r'focus_point:\s*\[([^\]]+)\]', text)
-    if match:
-        try:
-            coords = [float(x.strip()) for x in match.group(1).split(",")]
-            if len(coords) == 2:
-                return coords
-        except ValueError:
-            pass
-    return []
-
-
-def _extract_keywords(text: str) -> list:
-    """提取 keywords 列表。"""
-    match = re.search(r'keywords:\s*\[([^\]]+)\]', text)
-    if match:
-        try:
-            raw = match.group(1)
-            # 去掉引号并分割
-            kws = [w.strip().strip('"').strip("'") for w in raw.split(",")]
-            return [w for w in kws if w]
-        except Exception:
-            pass
-    return []
