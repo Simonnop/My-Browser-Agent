@@ -1,0 +1,35 @@
+{
+  "1": {
+    "tagName": "HTML",
+    "id": "",
+    "className": "",
+    "x": 0,
+    "y": -40,
+    "w": 1470,
+    "h": 770,
+    "area": 1131900,
+    "type": "page"
+  },
+  "2": {
+    "tagName": "BODY",
+    "id": "",
+    "className": "",
+    "x": 0,
+    "y": -40,
+    "w": 1470,
+    "h": 770,
+    "area": 1131900,
+    "type": "page"
+  },
+  "3": {
+    "tagName": "DIV",
+    "id": "",
+    "className": "page-right-information",
+    "x": 893,
+    "y": 136.5,
+    "w": 442,
+    "h": 677.5,
+    "area": 299455,
+    "type": "vertical"
+  }
+}
