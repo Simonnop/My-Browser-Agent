@@ -1,6 +1,6 @@
-# My Browser Agent
+# Browser-Controller：本地浏览器控制 Agent
 
-My Browser Agent 是一个基于大语言模型（LLM）的自动化浏览器控制代理。它利用 **LangGraph** 构建 ReAct 工作流，并通过 **Playwright** 基于 CDP (Chrome DevTools Protocol) 自动接管本地 Chrome 浏览器，像人类一样自主执行网页浏览、点击、输入等复杂任务。
+Browser-Controller 是一个基于大语言模型（LLM）的自动化浏览器控制代理。它利用 **LangGraph** 构建 ReAct 工作流，并通过 **Playwright** 基于 CDP (Chrome DevTools Protocol) 自动接管本地 Chrome 浏览器，像人类一样自主执行网页浏览、点击、输入等复杂任务。
 
 ## ✨ 特性
 
@@ -27,7 +27,7 @@ My Browser Agent 是一个基于大语言模型（LLM）的自动化浏览器控
 ### 1. 安装依赖
 
 ```bash
-git clone https://github.com/your-repo/My-Browser-Agent.git
+git clone https://github.com/your-repo/Browser-Controller.git
 cd My-Browser-Agent
 
 # 推荐使用虚拟环境
