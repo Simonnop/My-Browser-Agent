@@ -17,11 +17,12 @@ class AgentState(TypedDict):
     current_som_mapping: str # JSON 字符串形式的映射，发给LLM
     current_focus_image: str # 当前光标所在的截图 (base64)
     current_scroll_image: str # 滚动区域截图 (base64)
+    current_page_title: str # 当前页面标题
+    current_page_url: str   # 当前页面 URL
     
     # Agent 返回的 Function Calls 序列 (用于 actions 节点)
     next_action: dict
-    
-    # 更新的 TODO List (LLM 每轮都会返回最新的计划)
+    # 更新的 todo List (LLM 每轮都会返回最新的计划)
     todo_list: str
     
     # 控制参数

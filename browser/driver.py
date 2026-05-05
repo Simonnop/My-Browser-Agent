@@ -1,11 +1,36 @@
 import os
 import time
+import socket
+import subprocess
 from playwright.sync_api import sync_playwright
 
 # 禁用 Playwright 底层 Node.js 的 deprecation 警告（如 url.parse）
 os.environ["NODE_OPTIONS"] = "--no-deprecation"
 
-DEBUG_PORT = os.getenv("DEBUG_PORT", "9222")
+DEBUG_PORT = int(os.getenv("DEBUG_PORT", "9222"))
+CHROME_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+USER_DATA_DIR = os.path.abspath('./chrome_profile')
+
+
+def _check_browser_running():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', DEBUG_PORT)) == 0
+
+
+def _start_chrome():
+    if not _check_browser_running():
+        print(f"[*] 正在启动浏览器并监听端口 {DEBUG_PORT}...")
+        cmd = [
+            CHROME_PATH,
+            f"--remote-debugging-port={DEBUG_PORT}",
+            f"--user-data-dir={USER_DATA_DIR}",
+            "--no-first-run"
+        ]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+    else:
+        print("[*] 浏览器已在运行，直接接入。")
+
 
 class BrowserDriver:
     _instance = None
@@ -20,6 +45,8 @@ class BrowserDriver:
         return cls._instance
         
     def connect(self):
+        # 确保浏览器进程已就绪
+        _start_chrome()
         try:
             self.browser = self.playwright.chromium.connect_over_cdp(f"http://localhost:{DEBUG_PORT}")
             context = self.browser.contexts[0]
@@ -33,7 +60,7 @@ class BrowserDriver:
             print(f"[-] 无法连接到浏览器, 请确保浏览器已开启 debugging 端口 {DEBUG_PORT}: {e}")
 
     def _handle_new_page(self, new_page):
-        print("\n[*] 检测到新标签页打开，正在自动接管并尝试关闭旧标签页...")
+        print("[*] 检测到新标签页打开，正在自动接管并尝试关闭旧标签页...")
         old_page = self.page
         self.page = new_page
         try:

@@ -18,41 +18,43 @@ USER_DATA_DIR = os.path.abspath('/Users/simonnop/Codebase/My-Browser-Agent/chrom
 JS_MARK_TOP_LAYER_ONLY = """
 () => {
     const isVisible = (el, rect) => {
-        // if (rect.width < 3 || rect.height < 3) return false;
         const style = window.getComputedStyle(el);
+        
+        // --- 核心优化：针对 Checkbox/Radio 放宽可见性判定 ---
+        const isCheckable = el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(el.type);
+        if (isCheckable) {
+            // 只要不是 display:none 且有尺寸，即便 opacity 为 0 也保留（兼容美化过的组件）
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0;
+        }
+        
+        // 其他元素维持原逻辑
         return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     };
 
-    // 层级检测：判断元素的中心点是否真的暴露在最上层
     const isTopElement = (el, rect) => {
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
-        
-        // 如果中心点不在视口内，判定为不可见
         if (cx < 0 || cx > window.innerWidth || cy < 0 || cy > window.innerHeight) return false;
-
         const topEl = document.elementFromPoint(cx, cy);
         if (!topEl) return false;
-
-        // 检查返回的最上层元素是否是当前元素本身或其子/父节点
         return el.contains(topEl) || topEl.contains(el);
     };
 
     const candidates = [];
     const elements = document.querySelectorAll('*');
 
-    // 1. 初步筛选：鼠标手型或输入框，且必须在最上层
     elements.forEach(el => {
         const rect = el.getBoundingClientRect();
-        const style = window.getComputedStyle(el);
         if (el.tagName === 'BODY' || el.tagName === 'HTML') return;
 
+        const style = window.getComputedStyle(el);
         const isPointer = style.cursor === 'pointer';
         const isInputType = ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
 
         if ((isPointer || isInputType) && isVisible(el, rect) && isTopElement(el, rect)) {
             candidates.push({
                 tagName: el.tagName,
+                type: el.type || '',
                 x: rect.left,
                 y: rect.top,
                 w: rect.width,
@@ -62,20 +64,21 @@ JS_MARK_TOP_LAYER_ONLY = """
         }
     });
 
-    // 2. 坐标区域包含删除逻辑 (INPUT 豁免)
     return candidates.filter((itemB, indexB) => {
+        // --- 核心优化：Checkbox 豁免过滤 ---
+        // 即使 Checkbox 被包裹在其他可点击元素（如 Label）内部，也强制保留
+        if (itemB.tagName === 'INPUT' && ['checkbox', 'radio'].includes(itemB.type)) return true;
+
         if (['INPUT', 'TEXTAREA', 'SELECT'].includes(itemB.tagName)) return true;
 
         const isCoveredByOthers = candidates.some((itemA, indexA) => {
             if (indexA === indexB) return false;
-            
             const aCoversB = (
                 itemB.x >= itemA.x - 0.5 &&
                 itemB.y >= itemA.y - 0.5 &&
                 (itemB.x + itemB.w) <= (itemA.x + itemA.w) + 0.5 &&
                 (itemB.y + itemB.h) <= (itemA.y + itemA.h) + 0.5
             );
-
             return aCoversB && (itemA.area > itemB.area);
         });
 

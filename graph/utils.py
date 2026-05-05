@@ -15,6 +15,8 @@ def create_initial_state(task: str, page, max_steps: int = 10) -> AgentState:
         "current_som_mapping": "",
         "current_focus_image": "",
         "current_scroll_image": "",
+        "current_page_title": "",
+        "current_page_url": "",
         "next_action": {},
         "todo_list": "初始任务，待规划",
         "step_count": 0,

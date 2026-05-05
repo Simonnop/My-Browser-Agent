@@ -2,12 +2,11 @@ import base64
 import json
 import io
 from PIL import Image, ImageDraw, ImageFont
-from tools.browser import driver
+from browser.driver import driver
 
 # 导入JS常量
-from playground.get_window_som import JS_MARK_TOP_LAYER_ONLY, get_high_contrast_color
-from playground.get_window_scroll import JS_MARK_SCROLLABLE, get_color_by_type
-from playground.get_window_focus import JS_GET_ONLY_FOCUS
+from browser.js_scripts import JS_SET_OF_MARKS, JS_GET_ONLY_FOCUS, JS_MARK_SCROLLABLE
+from browser.tools import get_high_contrast_color, get_color_by_type
 
 def _get_base64_image(img: Image.Image) -> str:
     buffered = io.BytesIO()
@@ -17,7 +16,7 @@ def _get_base64_image(img: Image.Image) -> str:
 def get_som_state():
     """执行 SOM 标注并返回 base64 截图和元素映射 JSON"""
     dpr = driver.execute_js("window.devicePixelRatio || 1")
-    elements = driver.execute_js(JS_MARK_TOP_LAYER_ONLY)
+    elements = driver.execute_js(JS_SET_OF_MARKS)
     
     screenshot_bytes = driver.screenshot()
     img = Image.open(io.BytesIO(screenshot_bytes)).convert("RGB")
